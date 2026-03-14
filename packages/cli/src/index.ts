@@ -526,9 +526,10 @@ async function main(): Promise<void> {
         const urlOrFilter = parsed.args[1];
         // 解析 network 特有的选项
         const abort = process.argv.includes("--abort");
+        const withBody = process.argv.includes("--with-body");
         const bodyIndex = process.argv.findIndex(a => a === "--body");
         const body = bodyIndex >= 0 ? process.argv[bodyIndex + 1] : undefined;
-        await networkCommand(subCommand, urlOrFilter, { json: parsed.flags.json, abort, body, tabId: globalTabId });
+        await networkCommand(subCommand, urlOrFilter, { json: parsed.flags.json, abort, body, withBody, tabId: globalTabId });
         break;
       }
 

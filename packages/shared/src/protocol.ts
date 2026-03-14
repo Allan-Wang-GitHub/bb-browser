@@ -82,6 +82,8 @@ export interface Request {
   };
   /** 过滤字符串（network requests, console 使用） */
   filter?: string;
+  /** network requests 是否包含 body/headers */
+  withBody?: boolean;
   /** console 子命令：get, clear */
   consoleCommand?: "get" | "clear";
   /** errors 子命令：get, clear */
@@ -137,6 +139,15 @@ export interface NetworkRequestInfo {
   statusText?: string;
   failed?: boolean;
   failureReason?: string;
+  requestHeaders?: Record<string, string>;
+  requestBody?: string;
+  requestBodyTruncated?: boolean;
+  responseHeaders?: Record<string, string>;
+  responseBody?: string;
+  responseBodyBase64?: boolean;
+  responseBodyTruncated?: boolean;
+  mimeType?: string;
+  bodyError?: string;
 }
 
 /** 控制台消息 */

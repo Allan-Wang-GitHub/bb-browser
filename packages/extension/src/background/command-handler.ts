@@ -1817,9 +1817,9 @@ async function handleNetwork(command: CommandEvent): Promise<CommandResult> {
         // 确保网络监控已启用
         await cdp.enableNetwork(tabId);
         const filter = command.filter as string | undefined;
-        const requests = cdp.getNetworkRequests(tabId, filter);
+        const withBody = command.withBody === true;
+        const requests = cdp.getNetworkRequests(tabId, filter, withBody);
         
-        // 转换为简化格式
         const networkRequests = requests.map(r => ({
           requestId: r.requestId,
           url: r.url,
@@ -1830,6 +1830,17 @@ async function handleNetwork(command: CommandEvent): Promise<CommandResult> {
           statusText: r.response?.statusText,
           failed: r.failed,
           failureReason: r.failureReason,
+          ...(withBody ? {
+            requestHeaders: r.requestHeaders,
+            requestBody: r.requestBody,
+            requestBodyTruncated: r.requestBodyTruncated,
+            responseHeaders: r.response?.headers,
+            responseBody: r.response?.body,
+            responseBodyBase64: r.response?.bodyBase64,
+            responseBodyTruncated: r.response?.bodyTruncated,
+            mimeType: r.response?.mimeType,
+            bodyError: r.bodyError,
+          } : {}),
         }));
 
         return {

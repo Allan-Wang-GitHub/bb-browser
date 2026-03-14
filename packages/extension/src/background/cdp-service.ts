@@ -127,14 +127,19 @@ export interface NetworkRequest {
   method: string;
   type: string;
   timestamp: number;
-  headers?: Record<string, string>;
-  postData?: string;
+  requestHeaders?: Record<string, string>;
+  requestBody?: string;
+  requestBodyTruncated?: boolean;
   response?: {
     status: number;
     statusText: string;
     headers?: Record<string, string>;
     mimeType?: string;
+    body?: string;
+    bodyBase64?: boolean;
+    bodyTruncated?: boolean;
   };
+  bodyError?: string;
   failed?: boolean;
   failureReason?: string;
 }
@@ -191,8 +196,12 @@ const networkRoutes = new Map<number, NetworkRoute[]>();
 
 /** 是否已启用网络监控的 tab */
 const networkEnabledTabs = new Set<number>();
+const networkBodyBytes = new Map<number, number>();
 
 const MAX_REQUESTS = 500;
+const MAX_REQUEST_BODY_BYTES = 64 * 1024;
+const MAX_RESPONSE_BODY_BYTES = 256 * 1024;
+const MAX_TAB_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_CONSOLE_MESSAGES = 500;
 const MAX_ERRORS = 100;
 
@@ -722,6 +731,9 @@ export async function enableNetwork(tabId: number): Promise<void> {
   if (!networkRequests.has(tabId)) {
     networkRequests.set(tabId, []);
   }
+  if (!networkBodyBytes.has(tabId)) {
+    networkBodyBytes.set(tabId, 0);
+  }
   
   console.log('[CDPService] Network enabled for tab:', tabId);
 }
@@ -740,22 +752,37 @@ export async function disableNetwork(tabId: number): Promise<void> {
   }
   
   networkEnabledTabs.delete(tabId);
+  networkBodyBytes.delete(tabId);
   console.log('[CDPService] Network disabled for tab:', tabId);
 }
 
 /**
  * 获取网络请求记录
  */
-export function getNetworkRequests(tabId: number, filter?: string): NetworkRequest[] {
+export function getNetworkRequests(tabId: number, filter?: string, withBody = false): NetworkRequest[] {
   const requests = networkRequests.get(tabId) || [];
-  if (!filter) return requests;
-  
-  const lowerFilter = filter.toLowerCase();
-  return requests.filter(r => 
-    r.url.toLowerCase().includes(lowerFilter) ||
-    r.method.toLowerCase().includes(lowerFilter) ||
-    r.type.toLowerCase().includes(lowerFilter)
+  const filtered = !filter ? requests : requests.filter(r => 
+    r.url.toLowerCase().includes(filter.toLowerCase()) ||
+    r.method.toLowerCase().includes(filter.toLowerCase()) ||
+    r.type.toLowerCase().includes(filter.toLowerCase())
   );
+
+  if (withBody) return filtered;
+
+  return filtered.map(r => ({
+    requestId: r.requestId,
+    url: r.url,
+    method: r.method,
+    type: r.type,
+    timestamp: r.timestamp,
+    response: r.response ? {
+      status: r.response.status,
+      statusText: r.response.statusText,
+    } : undefined,
+    failed: r.failed,
+    failureReason: r.failureReason,
+  }));
+  
 }
 
 /**
@@ -763,6 +790,7 @@ export function getNetworkRequests(tabId: number, filter?: string): NetworkReque
  */
 export function clearNetworkRequests(tabId: number): void {
   networkRequests.set(tabId, []);
+  networkBodyBytes.set(tabId, 0);
 }
 
 /**
@@ -893,6 +921,8 @@ export function initEventListeners(): void {
       handleNetworkResponse(tabId, params as NetworkResponseParams);
     } else if (method === 'Network.loadingFailed') {
       handleNetworkFailed(tabId, params as NetworkFailedParams);
+    } else if (method === 'Network.loadingFinished') {
+      void handleNetworkLoadingFinished(tabId, params as NetworkLoadingFinishedParams);
     }
     
     // Fetch 拦截事件
@@ -936,6 +966,7 @@ function cleanupTab(tabId: number): void {
   networkRequests.delete(tabId);
   networkRoutes.delete(tabId);
   networkEnabledTabs.delete(tabId);
+  networkBodyBytes.delete(tabId);
   consoleMessages.delete(tabId);
   jsErrors.delete(tabId);
 }
@@ -972,12 +1003,72 @@ interface NetworkFailedParams {
   errorText: string;
 }
 
+interface NetworkLoadingFinishedParams {
+  requestId: string;
+}
+
+interface GetResponseBodyResult {
+  body: string;
+  base64Encoded: boolean;
+}
+
 interface FetchPausedParams {
   requestId: string;
   request: {
     url: string;
     method: string;
   };
+}
+
+
+function estimateBodyBytes(value?: string): number {
+  return value ? value.length * 2 : 0;
+}
+
+function truncateBody(value: string, maxBytes: number): { body: string; truncated: boolean } {
+  const maxChars = Math.max(0, Math.floor(maxBytes / 2));
+  if (value.length <= maxChars) {
+    return { body: value, truncated: false };
+  }
+  return { body: value.slice(0, maxChars), truncated: true };
+}
+
+function getStoredBodyBytes(request: NetworkRequest): number {
+  return estimateBodyBytes(request.requestBody) + estimateBodyBytes(request.response?.body);
+}
+
+function updateTabBodyBytes(tabId: number): void {
+  const requests = networkRequests.get(tabId) || [];
+  let total = 0;
+  for (const request of requests) {
+    total += getStoredBodyBytes(request);
+  }
+  networkBodyBytes.set(tabId, total);
+}
+
+function enforceBodyBudget(tabId: number): void {
+  const requests = networkRequests.get(tabId) || [];
+  let total = networkBodyBytes.get(tabId) || 0;
+
+  for (const request of requests) {
+    if (total <= MAX_TAB_BODY_BYTES) break;
+
+    if (request.requestBody) {
+      total -= estimateBodyBytes(request.requestBody);
+      delete request.requestBody;
+      request.requestBodyTruncated = true;
+    }
+
+    if (total <= MAX_TAB_BODY_BYTES) break;
+
+    if (request.response?.body) {
+      total -= estimateBodyBytes(request.response.body);
+      delete request.response.body;
+      request.response.bodyTruncated = true;
+    }
+  }
+
+  networkBodyBytes.set(tabId, Math.max(0, total));
 }
 
 function handleNetworkRequest(tabId: number, params: NetworkRequestParams): void {
@@ -988,17 +1079,24 @@ function handleNetworkRequest(tabId: number, params: NetworkRequestParams): void
     requests.shift();
   }
   
+  const truncatedRequestBody = params.request.postData
+    ? truncateBody(params.request.postData, MAX_REQUEST_BODY_BYTES)
+    : undefined;
+
   requests.push({
     requestId: params.requestId,
     url: params.request.url,
     method: params.request.method,
     type: params.type,
     timestamp: params.timestamp * 1000,
-    headers: params.request.headers,
-    postData: params.request.postData,
+    requestHeaders: params.request.headers,
+    requestBody: truncatedRequestBody?.body,
+    requestBodyTruncated: truncatedRequestBody?.truncated,
   });
   
   networkRequests.set(tabId, requests);
+  updateTabBodyBytes(tabId);
+  enforceBodyBudget(tabId);
 }
 
 function handleNetworkResponse(tabId: number, params: NetworkResponseParams): void {
@@ -1011,7 +1109,38 @@ function handleNetworkResponse(tabId: number, params: NetworkResponseParams): vo
       statusText: params.response.statusText,
       headers: params.response.headers,
       mimeType: params.response.mimeType,
+      body: request.response?.body,
+      bodyBase64: request.response?.bodyBase64,
+      bodyTruncated: request.response?.bodyTruncated,
     };
+  }
+}
+
+async function handleNetworkLoadingFinished(tabId: number, params: NetworkLoadingFinishedParams): Promise<void> {
+  const requests = networkRequests.get(tabId) || [];
+  const request = requests.find(r => r.requestId === params.requestId);
+
+  if (!request || request.failed) {
+    return;
+  }
+
+  try {
+    const result = await sendCommand<GetResponseBodyResult>(tabId, 'Network.getResponseBody', { requestId: params.requestId });
+    const truncatedResponseBody = truncateBody(result.body, MAX_RESPONSE_BODY_BYTES);
+    request.response = {
+      status: request.response?.status ?? 0,
+      statusText: request.response?.statusText ?? '',
+      headers: request.response?.headers,
+      mimeType: request.response?.mimeType,
+      body: truncatedResponseBody.body,
+      bodyBase64: result.base64Encoded,
+      bodyTruncated: truncatedResponseBody.truncated,
+    };
+    request.bodyError = undefined;
+    updateTabBodyBytes(tabId);
+    enforceBodyBudget(tabId);
+  } catch (error) {
+    request.bodyError = error instanceof Error ? error.message : String(error);
   }
 }
 

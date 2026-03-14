@@ -8,6 +8,7 @@ interface NetworkOptions {
   json?: boolean;
   abort?: boolean;
   body?: string;
+  withBody?: boolean;
   tabId?: number;
 }
 
@@ -26,6 +27,7 @@ export async function networkCommand(
       abort: options.abort,
       body: options.body,
     } : undefined,
+    withBody: subCommand === "requests" ? options.withBody : undefined,
     tabId: options.tabId,
   });
 
@@ -54,6 +56,22 @@ export async function networkCommand(
             : (req.status ? `${req.status} ${req.statusText || ''}` : 'pending');
           console.log(`${req.method} ${req.url}`);
           console.log(`  类型: ${req.type}, 状态: ${status}`);
+          if (options.withBody) {
+            const requestHeaderCount = req.requestHeaders ? Object.keys(req.requestHeaders).length : 0;
+            const responseHeaderCount = req.responseHeaders ? Object.keys(req.responseHeaders).length : 0;
+            console.log(`  请求头: ${requestHeaderCount}, 响应头: ${responseHeaderCount}`);
+            if (req.requestBody !== undefined) {
+              const preview = req.requestBody.length > 200 ? `${req.requestBody.slice(0, 200)}...` : req.requestBody;
+              console.log(`  请求体: ${preview}`);
+            }
+            if (req.responseBody !== undefined) {
+              const preview = req.responseBody.length > 200 ? `${req.responseBody.slice(0, 200)}...` : req.responseBody;
+              console.log(`  响应体: ${preview}`);
+            }
+            if (req.bodyError) {
+              console.log(`  Body错误: ${req.bodyError}`);
+            }
+          }
           console.log("");
         }
       }
