@@ -280,6 +280,14 @@ export interface ResponseData {
   traceEvents?: TraceEvent[];
   /** Trace 录制状态（trace status 命令返回） */
   traceStatus?: TraceStatus;
+  /** 元素角色（check/uncheck 命令返回） */
+  role?: string;
+  /** 元素名称（check/uncheck 命令返回） */
+  name?: string;
+  /** 是否之前已勾选（check 命令返回） */
+  wasAlreadyChecked?: boolean;
+  /** 是否之前已取消勾选（uncheck 命令返回） */
+  wasAlreadyUnchecked?: boolean;
 }
 
 /** 响应类型 */
