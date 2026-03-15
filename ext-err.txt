@@ -1,0 +1,2 @@
+﻿src/background/trace-service.ts(11,15): error TS2459: Module '"@bb-browser/shared"' declares 'TraceEvent' locally, but it is not exported.
+src/background/trace-service.ts(11,27): error TS2459: Module '"@bb-browser/shared"' declares 'TraceStatus' locally, but it is not exported.

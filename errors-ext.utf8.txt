@@ -1,0 +1,1 @@
+﻿src/background/trace-service.ts(11,46): error TS2307: Cannot find module '@anthropic/bb-browser-shared' or its corresponding type declarations.

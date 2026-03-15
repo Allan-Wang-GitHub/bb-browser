@@ -264,6 +264,56 @@ function siteUpdate(): void {
   console.log(`已安装 ${sites.length} 个社区 adapter。`);
 }
 
+/**
+ * 将原始 eval 错误转换为用户友好的消息
+ */
+function normalizeEvalError(rawError: string, siteName: string, domain?: string): string {
+  const domainUrl = domain ? `https://${domain}` : undefined;
+  const lower = rawError.toLowerCase();
+
+  // Network / fetch errors — most likely auth or connectivity
+  if (lower.includes("failed to fetch") || lower.includes("networkerror") || lower.includes("network error")) {
+    if (domainUrl) {
+      return `Please make sure you are logged in to website ${domainUrl}.`;
+    }
+    return `[error] site ${siteName}: A network error occurred. Please check your connection and try again.`;
+  }
+
+  // HTTP 401 / 403
+  if (/\b(401|unauthorized)\b/i.test(rawError) || /\b(403|forbidden)\b/i.test(rawError)) {
+    if (domainUrl) {
+      return `Please make sure you are logged in to website ${domainUrl}.`;
+    }
+    return `[error] site ${siteName}: Authentication required. Please log in and try again.`;
+  }
+
+  // Login / auth keywords
+  if (/not.?logged|login.?required|sign.?in.?required|auth.?required/i.test(rawError)) {
+    if (domainUrl) {
+      return `Please make sure you are logged in to website ${domainUrl}.`;
+    }
+    return `[error] site ${siteName}: You need to be logged in. Please sign in and try again.`;
+  }
+
+  // Timeout
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return `[error] site ${siteName}: Request timed out. The page may still be loading — please wait and try again.`;
+  }
+
+  // CORS
+  if (lower.includes("cors") || lower.includes("cross-origin")) {
+    if (domainUrl) {
+      return `[error] site ${siteName}: Cross-origin request blocked. Please make sure you have ${domainUrl} open in your browser.`;
+    }
+    return `[error] site ${siteName}: Cross-origin request blocked.`;
+  }
+
+  // Fallback — strip stack trace, keep first meaningful line
+  const firstLine = rawError.split("\n")[0].replace(/^Eval failed:\s*/i, "").replace(/^Eval error:\s*/i, "").trim();
+  return `[error] site ${siteName}: ${firstLine}`;
+}
+
+
 async function siteRun(
   name: string,
   args: string[],
@@ -372,14 +422,12 @@ async function siteRun(
   const evalResp: Response = await sendCommand(evalReq);
 
   if (!evalResp.success) {
-    const hint = site.domain
-      ? `Open https://${site.domain} in your browser, make sure you are logged in, then retry.`
-      : undefined;
+    const rawError = evalResp.error || "eval failed";
+    const friendlyMessage = normalizeEvalError(rawError, name, site.domain);
     if (options.json) {
-      console.log(JSON.stringify({ id: evalReq.id, success: false, error: evalResp.error || "eval failed", hint }));
+      console.log(JSON.stringify({ id: evalReq.id, success: false, error: rawError, message: friendlyMessage }));
     } else {
-      console.error(`[error] site ${name}: ${evalResp.error || "eval failed"}`);
-      if (hint) console.error(`  Hint: ${hint}`);
+      console.error(friendlyMessage);
     }
     process.exit(1);
   }

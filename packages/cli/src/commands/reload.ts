@@ -26,7 +26,7 @@ export async function reloadCommand(
     if (!listRes.ok) {
       throw new Error(`CDP 未启用。请用 --remote-debugging-port=${port} 启动 Chrome`);
     }
-    const list = await listRes.json();
+    const list = (await listRes.json()) as any[];
     
     // 找到 chrome://extensions 页面
     const extPage = list.find((t: any) => 

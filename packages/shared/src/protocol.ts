@@ -288,6 +288,10 @@ export interface ResponseData {
   wasAlreadyChecked?: boolean;
   /** 是否之前已取消勾选（uncheck 命令返回） */
   wasAlreadyUnchecked?: boolean;
+  /** 所选的值（select 命令返回） */
+  selectedValue?: string;
+  /** 所选的标签（select 命令返回） */
+  selectedLabel?: string;
 }
 
 /** 响应类型 */
